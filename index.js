@@ -1,6 +1,9 @@
 const express = require("express");
 const morgan = require("morgan");
 
+require("dotenv").config();
+const Entry = require("./models/entry_md");
+
 const app = express();
 app.use(express.json());
 app.use(express.static("dist"));
@@ -16,97 +19,108 @@ app.use(
 	)
 );
 
-let data = [
-	{
-		id: "1",
-		name: "Hornigold",
-		number: "222-2222",
-	},
-	{
-		id: "2",
-		name: "Bellamy",
-		number: "888-8888",
-	},
-	{
-		id: "3",
-		name: "Rackham",
-		number: "555-5555",
-	},
-	{
-		id: "4",
-		name: "Reed",
-		number: "444-4444",
-	},
-];
-
-// utility
-const generateId = () => {
-	// id really rather guarentee no duplicate ids but the instructions kind of
-	// actually imply NOT to do that, so
-	return Math.floor(Math.random() * 1000000);
-};
-
 // get
 app.get("/", (request, response) => {
 	response.send("<h1>text</h1>");
 });
 
 app.get("/api/persons", (request, response) => {
-	response.json(data);
+	Entry.find({}).then((data) => {
+		response.json(data);
+	});
 });
 
-app.get("/api/persons/:id", (request, response) => {
-	const id = request.params.id;
-	const person = data.find((entry) => entry.id === id);
-
-	if (person) {
-		response.json(person);
-	} else {
-		response.status(404).end();
-	}
+app.get("/api/persons/:id", (request, response, next) => {
+	Entry.findById(request.params.id)
+		.then((entry) => {
+			if (entry) {
+				response.json(entry);
+			} else {
+				response.status(404).end();
+			}
+		})
+		.catch((error) => next(error));
 });
 
 app.get("/info", (request, response) => {
-	console.log(request.headers);
-	const responseHtml = `<p>Phonebook has info for ${
-		data.length
-	} people</p><p>${new Date()}</p>`;
-	response.send(responseHtml);
+	// console.log(request.headers);
+	Entry.find({}).then((data) => {
+		const responseHtml = `<p>Phonebook has info for ${
+			data.length
+		} people</p><p>${new Date()}</p>`;
+		response.send(responseHtml);
+	});
 });
 
 // post
-app.post("/api/persons", (request, response) => {
+app.post("/api/persons", (request, response, next) => {
 	const body = request.body;
 
-	if (!body.number) {
-		return response.status(400).json({ error: "number is missing" });
-	}
-	if (!body.name) {
-		return response.status(400).json({ error: "name is missing" });
-	} else if (data.find((entry) => entry.name === body.name)) {
-		return response.status(400).json({ error: "name must be unique" });
-	}
+	// if (!body.number) {
+	// 	return response.status(400).json({ error: "number is missing" });
+	// }
+	// if (!body.name) {
+	// 	return response.status(400).json({ error: "name is missing" });
+	// }
 
-	const person = {
+	const entry = new Entry({
 		name: body.name,
 		number: body.number,
-		id: generateId(),
-	};
+	});
 
-	data = data.concat(person);
+	entry
+		.save()
+		.then((saved) => {
+			response.json(saved);
+		})
+		.catch((error) => next(error));
+});
 
-	response.json(person);
+// put
+app.put("/api/persons/:id", (request, response, next) => {
+	const { name, number } = request.body;
+
+	Entry.findByIdAndUpdate(
+		request.params.id,
+		{ name, number },
+		{ new: true, runValidators: true, context: "query" }
+	)
+		.then((updatedEntry) => {
+			response.json(updatedEntry);
+		})
+		.catch((error) => next(error));
 });
 
 // delete
-app.delete("/api/persons/:id", (request, response) => {
-	const id = request.params.id;
-	data = data.filter((entry) => entry.id !== id);
+app.delete("/api/persons/:id", (request, response, next) => {
+	Entry.findByIdAndDelete(request.params.id)
+		.then((result) => {
+			response.status(204).end();
+		})
+		.catch((error) => next(error));
 
-	response.status(204).end();
+	// const id = request.params.id;
+	// data = data.filter((entry) => entry.id !== id);
+
+	// response.status(204).end();
 });
 
 //
 const PORT = process.env.PORT || 3001;
 app.listen(PORT);
 console.log(`server running on port ${PORT}`);
+
+// this apparently has to go after all other middleware AND routes
+// which looks *messy*
+const errorHandler = (error, request, response, next) => {
+	console.error(error.message);
+
+	if (error.name === "CastError") {
+		return response.status(400).send({ error: "malformatted id" });
+	} else if (error.name === "ValidationError") {
+		return response.status(400).send({ error: error.message });
+	}
+
+	next(error);
+};
+app.use(errorHandler);
